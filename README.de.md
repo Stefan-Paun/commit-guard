@@ -28,6 +28,23 @@ Mit `writeCheck` prüft der Hook auch `Write`, `Edit`, `MultiEdit` und `Notebook
 
 Matcher: `"matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit"`.
 
+## Protokoll und `waechter report`
+
+Der Wächter führt ein kleines lokales Protokoll seiner Entscheidungen, damit man sieht, ob er etwas bringt und wo er nervt.
+
+- **Was protokolliert wird:** je Warnung (`ask`) oder Block (`deny`) eine JSON-Zeile mit genau fünf Feldern: `zeit` (ISO-Zeit), `entscheidung` (`geblockt`, `gewarnt`, mit `auditAllowed` auch `erlaubt`), `regel` (feste Liste, z. B. `gesperrter-branch`, `geheimnis`, `force-push`, `unklarer-befehl`), `repo` (Ordnername des Repos, voller Pfad nur mit `auditFullPath`) und `befehl` (nur die Art: `git push`, `git commit`, `Write`, `anderes Programm`, …).
+- **Was nie protokolliert wird:** der Befehl selbst, Commit-Nachrichten, Dateinamen oder -inhalte, der Meldungstext, Geheimniswerte (auch nicht maskiert), Remote-URLs. Die Felder kommen aus einer Zulassungsliste und sind in der Länge begrenzt.
+- **Wo:** `auditDir`, sonst `$XDG_DATA_HOME/waechter/audit.jsonl`, sonst `~/.local/share/waechter/audit.jsonl` (Windows: `%USERPROFILE%\.local\share\waechter`). Ordner `0700`, Datei `0600`. Ab `auditMaxBytes` (Standard 1 MB) wird rotiert, drei Generationen (`.1`–`.3`) bleiben.
+- **Robust:** geschrieben wird erst nach der Antwort des Hooks; ein Fehler ändert oder blockiert die Entscheidung nie und wird einmal auf stderr gemeldet. Parallele Hooks hängen ganze Zeilen an (rotieren zwei Hooks im selben Moment, kann eine alte Generation durcheinandergeraten; die aktuellen Zeilen bleiben ganz). Ohne lesbare Konfiguration wird nichts protokolliert.
+- **Abschalten:** `"auditLog": false`.
+
+```
+node waechter.mjs report [--tage 7] [--repo NAME] [--format text|json|md]
+node waechter.mjs report --leeren
+```
+
+Der Bericht zeigt Summen je Entscheidung, Regel und Repo, eine kleine Textgrafik je Tag, die letzten 10 Fälle und Regeln, die besonders oft warnen (mindestens 5 Warnungen und ein Viertel aller Warnungen: Kandidaten für eine Ausnahme). Kaputte Zeilen werden übersprungen und gezählt. `--tage 0` nimmt alles. `--leeren` verschiebt das Protokoll (alle Generationen) nach `audit.jsonl….sicherung-<Zeit>`, statt es zu löschen. Über npm installiert geht auch `waechter report`.
+
 ## Installation
 
 Repo klonen und in `~/.claude/settings.json` einen `PreToolUse`-Hook mit Matcher `Bash` eintragen, der `node $HOME/pfad/zu/waechter/waechter.mjs` aufruft (Beispiel siehe `README.md`).
@@ -44,7 +61,7 @@ Große Diffs: Ist der gestagte Diff (oder das Push-Log) größer als `maxDiffMeg
 
 ## Tests
 
-`npm test` (Node 18+, keine Abhängigkeiten). Tests: `test/shell.test.mjs`, `test/gitargs.test.mjs`, `test/check.test.mjs` (temporäre Repos, erfundene Daten), `test/waechter.test.mjs`. Eine CI-Matrix (ubuntu/macos/windows × Node 18/20/22) liegt in `.github/workflows/test.yml`.
+`npm test` (Node 18+, keine Abhängigkeiten). Tests: `test/shell.test.mjs`, `test/gitargs.test.mjs`, `test/check.test.mjs` (temporäre Repos, erfundene Daten), `test/waechter.test.mjs`, `test/audit.test.mjs` (Protokoll und Bericht, immer in einem Temp-Ordner). Eine CI-Matrix (ubuntu/macos/windows × Node 18/20/22) liegt in `.github/workflows/test.yml`.
 
 ## Lizenz
 

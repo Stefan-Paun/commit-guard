@@ -4,10 +4,11 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync, existsSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, dirname, resolve, relative } from 'node:path'
+import { join, dirname, resolve, relative, basename } from 'node:path'
 import { parseShell, trackDirs } from './shell.mjs'
 import { parseGit, parseCommitArgs, parsePushArgs, refNames, gitContext } from './gitargs.mjs'
 import { fileURLToPath } from 'node:url'
+import { makeEntry, writeEntry, NO_REPO } from './audit.mjs'
 
 // Built-in secret patterns (checked on added diff lines only)
 export const SECRET_PATTERNS = [
@@ -34,6 +35,11 @@ export const DEFAULT_CONFIG = {
   writeCheck: 'aus', // Write/Edit check in public repos: 'aus' | 'warnen' (ask) | 'blocken' (deny)
   writeCheckIgnorePaths: [], // regexes on the repo-relative path (test fixtures etc.) that are never checked
   writeCheckMaxBytes: 1000000, // larger new content is skipped
+  auditLog: true, // local log of warnings/blocks for `waechter report`; false switches it off completely
+  auditDir: '', // folder of the log; empty = $XDG_DATA_HOME/waechter or ~/.local/share/waechter
+  auditAllowed: false, // also log allowed git push/commit (and checked writes)
+  auditFullPath: false, // log the full repo path instead of the folder name
+  auditMaxBytes: 1000000, // rotate after this size, three generations are kept
 }
 
 export function loadConfig(path) {
@@ -98,7 +104,7 @@ export function scanText(text, patterns) {
 
 const TOO_BIG = Symbol('too-big')
 const megabytes = config => Math.max(Number(config?.maxDiffMegabytes) || DEFAULT_CONFIG.maxDiffMegabytes, 0.001)
-const tooBig = config => ({ decision: 'ask', reason: `waechter: diff too large or too slow to scan (limit ${megabytes(config)} MB), check manually` })
+const tooBig = config => ({ decision: 'ask', rule: 'diff-zu-gross', reason: `waechter: diff too large or too slow to scan (limit ${megabytes(config)} MB), check manually` })
 
 // Environment variables from `VAR=x git ...` that change what git would do.
 const GIT_ENV = new Set(['GIT_DIR', 'GIT_WORK_TREE', 'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'EMAIL'])
@@ -115,7 +121,7 @@ const DANGEROUS_ENV = /^(GIT_EXTERNAL_DIFF|GIT_PAGER|PAGER|GIT_EDITOR|GIT_SEQUEN
  * Returns the trimmed output, undefined on an ordinary git error, or TOO_BIG when the output
  * exceeded maxBuffer (ctx.config.maxDiffMegabytes) or git timed out: that must never count as "empty".
  */
-function git(ctx, args) {
+function git(ctx, args, timeout = 10000) {
   const pre = ['-C', ctx.dir]
   if (ctx.gitDir) pre.push('--git-dir', ctx.gitDir)
   if (ctx.workTree) pre.push('--work-tree', ctx.workTree)
@@ -127,7 +133,7 @@ function git(ctx, args) {
   Object.assign(env, ctx.env, { GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' })
   try {
     return execFileSync('git', [...pre, ...args], {
-      encoding: 'utf8', timeout: 10000, maxBuffer: Math.ceil(megabytes(ctx.config) * 1024 * 1024),
+      encoding: 'utf8', timeout, maxBuffer: Math.ceil(megabytes(ctx.config) * 1024 * 1024),
       stdio: ['ignore', 'pipe', 'ignore'], env,
     }).trim()
   } catch (e) {
@@ -170,6 +176,15 @@ function repoInfo(ctx, config, target) {
   }
 }
 
+// Audit rule of a commit finding (the first finding names the entry).
+function findingRule(finding) {
+  if (finding.startsWith('Private email address')) return 'private-email'
+  if (finding.startsWith('Phone number')) return 'telefonnummer'
+  if (finding.startsWith('Private path')) return 'privater-pfad'
+  if (/ does not match /.test(finding)) return 'identitaet'
+  return 'geheimnis'
+}
+
 const emailOk = (text, config) => new RegExp(config.requiredEmailPattern, 'i').test(text)
 
 function checkCommit(args, repo, config) {
@@ -197,9 +212,10 @@ function checkCommit(args, repo, config) {
   }
   if (!findings.length) return
   const text = `waechter: ${findings.join('; ')}`
+  const rule = findingRule(findings[0])
   return repo.isPublic
-    ? { decision: 'deny', reason: `${text}. Public repo, commit blocked.` }
-    : { decision: 'ask', reason: `${text}. Commit anyway?` }
+    ? { decision: 'deny', rule, reason: `${text}. Public repo, commit blocked.` }
+    : { decision: 'ask', rule, reason: `${text}. Commit anyway?` }
 }
 
 function checkPush(args, ctxIn, config) {
@@ -210,20 +226,20 @@ function checkPush(args, ctxIn, config) {
 
   if (repo.isPublic) {
     if (push.all || push.mirror)
-      return { decision: 'deny', reason: 'waechter: --all/--mirror on a public repo would upload every local branch.' }
+      return { decision: 'deny', rule: 'all-mirror', reason: 'waechter: --all/--mirror on a public repo would upload every local branch.' }
     const wild = push.refspecs.filter(s => s.glob)
     if (wild.length)
-      return { decision: 'deny', reason: `waechter: refspec ${wild.map(s => s.raw).join(', ')} contains a wildcard and may upload several branches.` }
+      return { decision: 'deny', rule: 'wildcard-refspec', reason: `waechter: refspec ${wild.map(s => s.raw).join(', ')} contains a wildcard and may upload several branches.` }
 
     const current = gitStr(ctx, ['symbolic-ref', '--short', '-q', 'HEAD'])
     const names = (push.refspecs.length ? push.refspecs.flatMap(refNames) : push.tags ? [] : ['HEAD'])
       .map(n => (n === 'HEAD' && current ? current : n))
     const blocked = [...new Set(names.filter(n => config.blockedBranches.includes(n)))]
     if (blocked.length)
-      return { decision: 'deny', reason: `waechter: branch ${blocked.join(', ')} is on the blocked list and must not be pushed.` }
+      return { decision: 'deny', rule: 'gesperrter-branch', reason: `waechter: branch ${blocked.join(', ')} is on the blocked list and must not be pushed.` }
 
     if (config.blockForcePush && push.forceKinds.length)
-      return { decision: 'deny', reason: `waechter: force push (${[...new Set(push.forceKinds)].join(', ')}) to a public repo is blocked (blockForcePush).` }
+      return { decision: 'deny', rule: 'force-push', reason: `waechter: force push (${[...new Set(push.forceKinds)].join(', ')}) to a public repo is blocked (blockForcePush).` }
 
     const sources = push.refspecs.length
       ? push.refspecs.filter(s => !s.delete).map(s => s.src.replace(/^\+/, ''))
@@ -232,13 +248,13 @@ function checkPush(args, ctxIn, config) {
       const idents = git(ctx, ['log', ...sources, ...(push.tags ? ['--tags'] : []), '--not', '--remotes', '--format=%ae%n%ce'])
       if (idents === TOO_BIG) return tooBig(config)
       if (idents === undefined)
-        return { decision: 'ask', reason: 'waechter: could not read the commits to push, so their author addresses are unchecked. Really push?' }
+        return { decision: 'ask', rule: 'push-unlesbar', reason: 'waechter: could not read the commits to push, so their author addresses are unchecked. Really push?' }
       const bad = [...new Set(idents.split('\n').filter(a => a && !emailOk(a, config)))]
       if (bad.length)
-        return { decision: 'deny', reason: `waechter: new commits carry ${bad.join(', ')} instead of an address matching ${config.requiredEmailPattern}.` }
+        return { decision: 'deny', rule: 'push-identitaet', reason: `waechter: new commits carry ${bad.join(', ')} instead of an address matching ${config.requiredEmailPattern}.` }
     }
   }
-  if (repo.alwaysAsk) return { decision: 'ask', reason: 'waechter: this remote is on the always-ask list. Really push?' }
+  if (repo.alwaysAsk) return { decision: 'ask', rule: 'immer-fragen', reason: 'waechter: this remote is on the always-ask list. Really push?' }
 }
 
 const SEVERITY = { deny: 2, ask: 1 }
@@ -271,7 +287,7 @@ function isIgnored(ctx, abs) {
 
 const WRITE_HINT = 'Stattdessen: Wert aus einer Umgebungsvariable oder dem Schlüsselbund lesen, oder in eine von git ignorierte Datei (z. B. .env in .gitignore) schreiben. Bewusst erlaubte Zeilen mit "waechter:erlaubt" markieren.'
 
-function checkWrite(input, config) {
+function checkWrite(input, config, info) {
   const mode = config.writeCheck
   if (mode === 'aus' || mode === undefined) return
   const pieces = newContents(input)
@@ -285,6 +301,7 @@ function checkWrite(input, config) {
   while (!existsSync(dir) && dirname(dir) !== dir) dir = dirname(dir)
   const repo = repoAt({ dir, config }, config)
   if (!repo?.isPublic) return
+  info?.seen?.push({ kind: input.tool_name, where: { dir: repo.top, top: repo.top } })
   // git reports the real path (macOS: /var -> /private/var), so resolve symlinks before comparing
   const realAbs = join(realpathSync(dir), relative(dir, abs))
   const rel = relative(repo.top, realAbs)
@@ -301,7 +318,7 @@ function checkWrite(input, config) {
   if (isIgnored({ dir: repo.top, config }, realAbs)) return // ignored by git: never lands in the repo (errors count as not ignored)
   const list = findings.map(f => `${f.kind}, Zeile ${f.line} (${f.masked})`).join('; ')
   const reason = `waechter: ${rel} liegt in einem öffentlichen Repo und würde enthalten: ${list}. ${WRITE_HINT}`
-  return { decision: mode === 'blocken' ? 'deny' : 'ask', reason }
+  return { decision: mode === 'blocken' ? 'deny' : 'ask', rule: 'schreibpruefung', kind: input.tool_name, where: { dir: repo.top, top: repo.top }, reason }
 }
 
 // Programs that only print or search text: `echo "git push"` is not a git call.
@@ -321,8 +338,12 @@ update-server-info lfs filter-repo`.split(/\s+/))
 
 const MAX_ALIAS_DEPTH = 5
 
-export function check(input, config) {
-  if (input.tool_name !== 'Bash') return checkWrite(input, config)
+/**
+ * Decision for one tool call: undefined (allow) or { decision, reason } plus, for the audit log,
+ * rule, kind and where (directory of the repo). `info.seen` collects the checked git calls/writes.
+ */
+export function check(input, config, info) {
+  if (input.tool_name !== 'Bash') return checkWrite(input, config, info)
   const command = String(input.tool_input?.command ?? '')
   const cwd = input.cwd || process.cwd()
   const parsed = parseShell(command, { home: homedir() })
@@ -350,6 +371,7 @@ export function check(input, config) {
     }
     if (dir === null) { unclear.push('the directory is unknown after a cd with a variable or "cd -"'); return }
     const ctx = ctxOf(dir, g, assigns)
+    info?.seen?.push({ kind: `git ${g.sub}`, where: ctx })
     let v
     if (g.sub === 'push') {
       const pa = parsePushArgs(g.args)
@@ -361,7 +383,7 @@ export function check(input, config) {
       unclear.push(...ca.unclear)
       v = repo && checkCommit(g.args, repo, config)
     }
-    if (v) verdicts.push(v)
+    if (v) verdicts.push({ ...v, kind: `git ${g.sub}`, where: ctx })
   }
 
   // `git <alias>`: look the alias up (with the same protection flags as every own git call) and check what it expands to.
@@ -401,8 +423,9 @@ export function check(input, config) {
   for (const dir of hidden) {
     const repo = repoInfo({ dir, config }, config)
     const text = 'waechter: a program other than git gets "git ... push/commit" as an argument and may run it unseen'
-    if (repo?.isPublic) verdicts.push({ decision: 'deny', reason: `${text}. Public repo, blocked. Call git directly.` })
-    else verdicts.push({ decision: 'ask', reason: `${text}. Run it anyway?` })
+    const tags = { rule: 'verstecktes-git', kind: 'anderes Programm', where: { dir } }
+    if (repo?.isPublic) verdicts.push({ decision: 'deny', ...tags, reason: `${text}. Public repo, blocked. Call git directly.` })
+    else verdicts.push({ decision: 'ask', ...tags, reason: `${text}. Run it anyway?` })
   }
 
   const worst = verdicts.sort((a, b) => SEVERITY[b.decision] - SEVERITY[a.decision])[0]
@@ -412,23 +435,67 @@ export function check(input, config) {
   if (uniq.length && (hard || /git/i.test(command))) {
     const repo = repoInfo({ dir: cwd, config }, config)
     const text = `waechter: cannot read this command safely (${uniq.join('; ')})`
-    if (repo?.isPublic) return { decision: 'deny', reason: `${text}. Public repo, blocked. Split it into plain git commands.` }
-    return worst ?? { decision: 'ask', reason: `${text}. Run it anyway?` }
+    const tags = { rule: 'unklarer-befehl', kind: 'unklar', where: { dir: cwd } }
+    if (repo?.isPublic) return { decision: 'deny', ...tags, reason: `${text}. Public repo, blocked. Split it into plain git commands.` }
+    return worst ?? { decision: 'ask', ...tags, reason: `${text}. Run it anyway?` }
   }
   return worst
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  let verdict
+/** Name of the repo for the log: folder name of the top level (full path with auditFullPath). */
+export function repoLabel(where, config) {
+  if (!where?.dir) return NO_REPO
+  // known top level (write check) needs no git call; otherwise a short one, so logging cannot hold up the hook
+  const top = where.top ?? git({ ...where, config }, ['rev-parse', '--show-toplevel'], 2000)
+  if (typeof top !== 'string' || !top) return NO_REPO
+  return config?.auditFullPath ? top : basename(top)
+}
+
+/**
+ * Writes the decision of one hook call to the audit log: the verdict (deny/ask), or with
+ * auditAllowed every checked git push/commit/write that passed. Never throws, never blocks.
+ */
+export function logDecision(verdict, info, config, now = new Date()) {
+  try {
+    if (!config || config.auditLog === false) return 0
+    const items = verdict
+      ? [{ decision: verdict.decision, rule: verdict.rule, kind: verdict.kind ?? 'hook', where: verdict.where }]
+      : config.auditAllowed ? (info?.seen ?? []).map(s => ({ decision: 'allow', rule: 'keine', kind: s.kind, where: s.where })) : []
+    let written = 0
+    for (const it of items) {
+      const entry = makeEntry({ ...it, repo: repoLabel(it.where, config), now }, config)
+      if (writeEntry(entry, config)) written++
+    }
+    return written
+  } catch {
+    return 0
+  }
+}
+
+function runHook() {
+  let verdict, config
+  const info = { seen: [] }
   try {
     const input = JSON.parse(readFileSync(0, 'utf8'))
-    verdict = check(input, loadConfig())
+    config = loadConfig()
+    verdict = check(input, config, info)
   } catch {
-    verdict = { decision: 'ask', reason: 'waechter: check failed, please decide yourself.' }
+    verdict = { decision: 'ask', rule: 'pruefung-fehlgeschlagen', kind: 'hook', reason: 'waechter: check failed, please decide yourself.' }
   }
   if (verdict) {
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: verdict.decision, permissionDecisionReason: verdict.reason },
     }))
+  }
+  // after the answer, so the log can never change or delay it; without a readable config nothing is logged
+  logDecision(verdict, info, config)
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  if (process.argv[2] === 'report') {
+    const { runReport } = await import('./report.mjs')
+    process.exitCode = runReport(process.argv.slice(3), { loadConfig })
+  } else {
+    runHook()
   }
 }

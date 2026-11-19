@@ -11,5 +11,10 @@
   "skipScanPaths": ["**/package-lock.json", "**/*.min.js"],
   "writeCheck": "aus",
   "writeCheckIgnorePaths": ["^test/fixtures/"],
-  "writeCheckMaxBytes": 1000000
+  "writeCheckMaxBytes": 1000000,
+  "auditLog": true,
+  "auditDir": "",
+  "auditAllowed": false,
+  "auditFullPath": false,
+  "auditMaxBytes": 1000000
 }
