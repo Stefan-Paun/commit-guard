@@ -35,7 +35,8 @@ export const auditFile = config => join(auditDir(config), AUDIT_FILE)
 
 /** Control characters out, length capped. */
 export function clean(value, max) {
-  return String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '?').slice(0, max)
+  // also bidi and zero-width marks, which could reorder report lines on screen
+  return String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g, '?').slice(0, max)
 }
 
 /** Builds an entry from the allow list only. Unknown decisions give null; unknown rules/kinds become 'sonstiges'. */
@@ -73,9 +74,10 @@ function reportOnce(dir, error, markerDir = tmpdir()) {
   reported = true
   const marker = join(markerDir, `waechter-audit-${createHash('sha256').update(dir).digest('hex').slice(0, 12)}.gemeldet`)
   try {
-    if (existsSync(marker)) return
-    writeFileSync(marker, '', { mode: 0o600 })
-  } catch { /* still tell it once in this process */ }
+    writeFileSync(marker, '', { mode: 0o600, flag: 'wx' }) // never follows a planted link
+  } catch (e) {
+    if (e?.code === 'EEXIST') return // already told
+  }
   try {
     process.stderr.write(`waechter: Protokoll in ${dir} nicht beschreibbar (${error?.code ?? 'Fehler'}); der Hook prüft trotzdem weiter. Abschalten mit "auditLog": false.\n`)
   } catch { /* stderr closed */ }
@@ -88,6 +90,7 @@ export function writeEntry(entry, config = {}, { markerDir } = {}) {
   try {
     const line = JSON.stringify(Object.fromEntries(FIELDS.map(f => [f, entry[f]]))) + '\n'
     mkdirSync(dir, { recursive: true, mode: 0o700 })
+    if (process.platform !== 'win32' && (statSync(dir).mode & 0o077)) chmodSync(dir, 0o700)
     const file = join(dir, AUDIT_FILE)
     rotate(file, Buffer.byteLength(line), maxBytes(config))
     // one write with O_APPEND: lines of parallel hooks do not interleave
@@ -101,9 +104,11 @@ export function writeEntry(entry, config = {}, { markerDir } = {}) {
 }
 
 const VALUES = new Set(Object.values(DECISIONS))
+// only times as written by makeEntry (years 2000-2999): an absurd date could make the report loop for ages
+const ISO = /^2\d{3}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/
 function valid(e) {
   return e && typeof e === 'object' && !Array.isArray(e) &&
-    typeof e.zeit === 'string' && !Number.isNaN(Date.parse(e.zeit)) &&
+    typeof e.zeit === 'string' && ISO.test(e.zeit) && !Number.isNaN(Date.parse(e.zeit)) &&
     VALUES.has(e.entscheidung) && typeof e.regel === 'string' && typeof e.repo === 'string' && typeof e.befehl === 'string'
 }
 
@@ -133,7 +138,8 @@ export function clearLog(config = {}, now = new Date()) {
   const moved = []
   for (const name of [file, ...Array.from({ length: GENERATIONS }, (_, i) => `${file}.${i + 1}`)]) {
     if (!existsSync(name)) continue
-    const target = `${name}.sicherung-${stamp}`
+    let target = `${name}.sicherung-${stamp}`
+    for (let i = 2; existsSync(target); i++) target = `${name}.sicherung-${stamp}-${i}` // never replace an older backup
     renameSync(name, target)
     moved.push(target)
   }

@@ -59,7 +59,7 @@ waechter keeps a small local log of its decisions so you can see whether it help
 - **What is logged:** one JSON line per warning (`ask`) or block (`deny`) with exactly five fields: `zeit` (ISO time), `entscheidung` (`geblockt`, `gewarnt`, with `auditAllowed` also `erlaubt`), `regel` (fixed list, e.g. `gesperrter-branch`, `geheimnis`, `force-push`, `unklarer-befehl`), `repo` (folder name of the repo, the full path only with `auditFullPath`) and `befehl` (kind only: `git push`, `git commit`, `Write`, `anderes Programm`, …).
 - **What is never logged:** the command itself, commit messages, file names or contents, the reason text, secret values (not even masked), remote URLs. Fields come from an allow list and are length-capped.
 - **Where:** `auditDir`, else `$XDG_DATA_HOME/waechter/audit.jsonl`, else `~/.local/share/waechter/audit.jsonl` (Windows: `%USERPROFILE%\.local\share\waechter`). Folder `0700`, file `0600`. After `auditMaxBytes` (default 1 MB) the file is rotated; three generations (`.1`–`.3`) are kept.
-- **Robust:** the log is written after the hook has answered; a failure never changes or blocks the decision, it is reported once on stderr. Parallel hooks append whole lines. Without a readable config nothing is logged.
+- **Robust:** the log is written after the hook has answered; a failure never changes or blocks the decision, it is reported once on stderr. Parallel hooks append whole lines (two hooks rotating at the same moment may mix up an old generation; the current lines stay intact). Without a readable config nothing is logged.
 - **Switch off:** `"auditLog": false`.
 
 ```

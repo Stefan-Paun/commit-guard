@@ -121,7 +121,7 @@ const DANGEROUS_ENV = /^(GIT_EXTERNAL_DIFF|GIT_PAGER|PAGER|GIT_EDITOR|GIT_SEQUEN
  * Returns the trimmed output, undefined on an ordinary git error, or TOO_BIG when the output
  * exceeded maxBuffer (ctx.config.maxDiffMegabytes) or git timed out: that must never count as "empty".
  */
-function git(ctx, args) {
+function git(ctx, args, timeout = 10000) {
   const pre = ['-C', ctx.dir]
   if (ctx.gitDir) pre.push('--git-dir', ctx.gitDir)
   if (ctx.workTree) pre.push('--work-tree', ctx.workTree)
@@ -133,7 +133,7 @@ function git(ctx, args) {
   Object.assign(env, ctx.env, { GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' })
   try {
     return execFileSync('git', [...pre, ...args], {
-      encoding: 'utf8', timeout: 10000, maxBuffer: Math.ceil(megabytes(ctx.config) * 1024 * 1024),
+      encoding: 'utf8', timeout, maxBuffer: Math.ceil(megabytes(ctx.config) * 1024 * 1024),
       stdio: ['ignore', 'pipe', 'ignore'], env,
     }).trim()
   } catch (e) {
@@ -301,7 +301,7 @@ function checkWrite(input, config, info) {
   while (!existsSync(dir) && dirname(dir) !== dir) dir = dirname(dir)
   const repo = repoAt({ dir, config }, config)
   if (!repo?.isPublic) return
-  info?.seen?.push({ kind: input.tool_name, where: { dir: repo.top } })
+  info?.seen?.push({ kind: input.tool_name, where: { dir: repo.top, top: repo.top } })
   // git reports the real path (macOS: /var -> /private/var), so resolve symlinks before comparing
   const realAbs = join(realpathSync(dir), relative(dir, abs))
   const rel = relative(repo.top, realAbs)
@@ -318,7 +318,7 @@ function checkWrite(input, config, info) {
   if (isIgnored({ dir: repo.top, config }, realAbs)) return // ignored by git: never lands in the repo (errors count as not ignored)
   const list = findings.map(f => `${f.kind}, Zeile ${f.line} (${f.masked})`).join('; ')
   const reason = `waechter: ${rel} liegt in einem öffentlichen Repo und würde enthalten: ${list}. ${WRITE_HINT}`
-  return { decision: mode === 'blocken' ? 'deny' : 'ask', rule: 'schreibpruefung', kind: input.tool_name, where: { dir: repo.top }, reason }
+  return { decision: mode === 'blocken' ? 'deny' : 'ask', rule: 'schreibpruefung', kind: input.tool_name, where: { dir: repo.top, top: repo.top }, reason }
 }
 
 // Programs that only print or search text: `echo "git push"` is not a git call.
@@ -445,7 +445,8 @@ export function check(input, config, info) {
 /** Name of the repo for the log: folder name of the top level (full path with auditFullPath). */
 export function repoLabel(where, config) {
   if (!where?.dir) return NO_REPO
-  const top = git({ ...where, config }, ['rev-parse', '--show-toplevel'])
+  // known top level (write check) needs no git call; otherwise a short one, so logging cannot hold up the hook
+  const top = where.top ?? git({ ...where, config }, ['rev-parse', '--show-toplevel'], 2000)
   if (typeof top !== 'string' || !top) return NO_REPO
   return config?.auditFullPath ? top : basename(top)
 }
@@ -490,11 +491,7 @@ function runHook() {
   logDecision(verdict, info, config)
 }
 
-function isMain() {
-  try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)) } catch { return false }
-}
-
-if (process.argv[1] && isMain()) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (process.argv[2] === 'report') {
     const { runReport } = await import('./report.mjs')
     process.exitCode = runReport(process.argv.slice(3), { loadConfig })

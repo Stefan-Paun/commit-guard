@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync, statSync, readdirSync, appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { check, logDecision, DEFAULT_CONFIG } from '../waechter.mjs'
 import { makeEntry, writeEntry, readEntries, clearLog, auditDir, auditFile, FIELDS, AUDIT_FILE, NO_REPO } from '../audit.mjs'
 import { summarize, formatText, formatMarkdown, parseArgs, runReport, dayOf } from '../report.mjs'
@@ -142,11 +143,15 @@ test('unwritable log folder: the hook still decides correctly and nothing throws
   const file = join(root, `plain-file-${++n}`)
   writeFileSync(file, 'x')
   const cfg = { ...base, auditDir: join(file, 'sub') } // a folder below a file can never be created
+  const markerDir = join(root, `marker${++n}`)
+  mkdirSync(markerDir)
+  // first failure in this process: reported once, with a marker in markerDir
+  assert.equal(writeEntry(makeEntry({ decision: 'ask' }), cfg, { markerDir }), false)
+  assert.equal(readdirSync(markerDir).filter(f => f.endsWith('.gemeldet')).length, 1)
   const pub = mk(PUBLIC)
   const { v, written } = hook(bash('git push origin old', pub.dir), cfg)
   assert.equal(v.decision, 'deny')
   assert.equal(written, 0)
-  assert.equal(writeEntry(makeEntry({ decision: 'ask' }), cfg, { markerDir: root }), false)
   assert.equal(logDecision({ decision: 'ask' }, null, cfg), 0)
   assert.equal(logDecision({ decision: 'ask' }, null, undefined), 0) // config could not be read: no log
 })
@@ -290,7 +295,7 @@ test('the CLI runs as `waechter report` and the hook still answers on stdin', ()
   const dir = freshDir()
   writeFileSync(cfgFile, JSON.stringify({ publicRepoPatterns: ['example/public'], blockedBranches: ['old'], auditDir: dir }))
   const env = { ...process.env, WAECHTER_CONFIG: cfgFile }
-  const script = new URL('../waechter.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
+  const script = fileURLToPath(new URL('../waechter.mjs', import.meta.url))
   const pub = mk(PUBLIC, 'cli-repo')
   const answer = execFileSync(process.execPath, [script], { env, input: JSON.stringify(bash('git push origin old', pub.dir)), encoding: 'utf8' })
   assert.equal(JSON.parse(answer).hookSpecificOutput.permissionDecision, 'deny')
@@ -298,4 +303,26 @@ test('the CLI runs as `waechter report` and the hook still answers on stdin', ()
   const s = JSON.parse(report)
   assert.equal(s.faelle, 1)
   assert.deepEqual(s.repos, { 'cli-repo': 1 })
+})
+
+test('review fixes: odd repo names, absurd times, bidi marks, backups never replaced', () => {
+  const s = summarize([E(0, 'gewarnt', 'x', 'constructor'), E(0, 'gewarnt', 'x', '__proto__')], { now: NOW })
+  assert.equal(s.repos.constructor, 1)
+  assert.deepEqual(Object.keys(s.repos).sort(), ['__proto__', 'constructor'])
+  assert.match(formatMarkdown(summarize([E(0, 'gewarnt', 'x', 'a\\|b')], { now: NOW })), /a\\\\\\\|b/)
+  assert.equal(makeEntry({ decision: 'ask', repo: 'a‮b​c' }).repo, 'a?b?c')
+  const cfg = withLog()
+  writeEntry(makeEntry({ decision: 'ask' }), cfg)
+  appendFileSync(auditFile(cfg), '{"zeit":"-100000-01-01T00:00:00Z","entscheidung":"gewarnt","regel":"x","repo":"r","befehl":"b"}\n')
+  const { entries, broken } = readEntries(cfg)
+  assert.equal(broken, 1)
+  const t = Date.now()
+  assert.ok(summarize([{ ...entries[0], zeit: '2000-01-01T00:00:00Z' }], { tage: 0, now: NOW }).tage.length <= 31)
+  assert.ok(Date.now() - t < 1000)
+  const when = new Date('2026-11-03T00:00:00Z')
+  const first = clearLog(cfg, when)
+  writeEntry(makeEntry({ decision: 'ask' }), cfg)
+  const second = clearLog(cfg, when)
+  assert.notEqual(first[0], second[0])
+  assert.ok(existsSync(first[0]) && existsSync(second[0]))
 })

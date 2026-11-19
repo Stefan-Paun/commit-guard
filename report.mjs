@@ -15,7 +15,7 @@ export const dayOf = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d
 const timeOf = d => `${dayOf(d)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 
 const count = (list, key) => {
-  const out = {}
+  const out = Object.create(null) // repo names like "constructor" or "__proto__" are plain keys
   for (const e of list) out[e[key]] = (out[e[key]] ?? 0) + 1
   return Object.fromEntries(Object.entries(out).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])))
 }
@@ -43,9 +43,11 @@ export function summarize(entries, { tage = 7, repo, now = new Date(), broken = 
   // per day: the shown period (at most MAX_DAYS_SHOWN days, newest last)
   let first = start
   if (!days) first = list.length ? new Date(list.reduce((m, e) => Math.min(m, Date.parse(e.zeit)), Infinity)) : now
+  const earliest = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (MAX_DAYS_SHOWN - 1))
+  const from = first < earliest ? earliest : first
   const shown = []
-  for (let d = new Date(first.getFullYear(), first.getMonth(), first.getDate()); d <= now; d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)) shown.push(dayOf(d))
-  const perDay = new Map(shown.slice(-MAX_DAYS_SHOWN).map(t => [t, Object.fromEntries(ORDER.map(d => [d, 0]))]))
+  for (let d = new Date(from.getFullYear(), from.getMonth(), from.getDate()); d <= now; d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)) shown.push(dayOf(d))
+  const perDay = new Map(shown.map(t => [t, Object.fromEntries(ORDER.map(d => [d, 0]))]))
   for (const e of list) {
     const row = perDay.get(dayOf(new Date(e.zeit)))
     if (row) row[e.entscheidung]++
@@ -105,7 +107,7 @@ export function formatText(s) {
   return out.join('\n') + '\n'
 }
 
-const cell = v => String(v).replace(/\|/g, '\\|').replace(/[`*_<>[\]]/g, m => `\\${m}`)
+const cell = v => String(v).replace(/[\\`*_<>[\]|#!~&]/g, m => `\\${m}`)
 
 export function formatMarkdown(s) {
   const out = [`## ${cell(header(s))}`, '', `**Fälle:** ${s.faelle} (${decisionLine(s)})`]

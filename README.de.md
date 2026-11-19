@@ -35,7 +35,7 @@ Der Wächter führt ein kleines lokales Protokoll seiner Entscheidungen, damit m
 - **Was protokolliert wird:** je Warnung (`ask`) oder Block (`deny`) eine JSON-Zeile mit genau fünf Feldern: `zeit` (ISO-Zeit), `entscheidung` (`geblockt`, `gewarnt`, mit `auditAllowed` auch `erlaubt`), `regel` (feste Liste, z. B. `gesperrter-branch`, `geheimnis`, `force-push`, `unklarer-befehl`), `repo` (Ordnername des Repos, voller Pfad nur mit `auditFullPath`) und `befehl` (nur die Art: `git push`, `git commit`, `Write`, `anderes Programm`, …).
 - **Was nie protokolliert wird:** der Befehl selbst, Commit-Nachrichten, Dateinamen oder -inhalte, der Meldungstext, Geheimniswerte (auch nicht maskiert), Remote-URLs. Die Felder kommen aus einer Zulassungsliste und sind in der Länge begrenzt.
 - **Wo:** `auditDir`, sonst `$XDG_DATA_HOME/waechter/audit.jsonl`, sonst `~/.local/share/waechter/audit.jsonl` (Windows: `%USERPROFILE%\.local\share\waechter`). Ordner `0700`, Datei `0600`. Ab `auditMaxBytes` (Standard 1 MB) wird rotiert, drei Generationen (`.1`–`.3`) bleiben.
-- **Robust:** geschrieben wird erst nach der Antwort des Hooks; ein Fehler ändert oder blockiert die Entscheidung nie und wird einmal auf stderr gemeldet. Parallele Hooks hängen ganze Zeilen an. Ohne lesbare Konfiguration wird nichts protokolliert.
+- **Robust:** geschrieben wird erst nach der Antwort des Hooks; ein Fehler ändert oder blockiert die Entscheidung nie und wird einmal auf stderr gemeldet. Parallele Hooks hängen ganze Zeilen an (rotieren zwei Hooks im selben Moment, kann eine alte Generation durcheinandergeraten; die aktuellen Zeilen bleiben ganz). Ohne lesbare Konfiguration wird nichts protokolliert.
 - **Abschalten:** `"auditLog": false`.
 
 ```
