@@ -52,6 +52,23 @@ With `writeCheck` set, the hook also looks at `Write`, `Edit`, `MultiEdit` and `
 
 Matcher for the hook: `"matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit"`.
 
+## Audit log and `waechter report`
+
+waechter keeps a small local log of its decisions so you can see whether it helps and where it gets in the way.
+
+- **What is logged:** one JSON line per warning (`ask`) or block (`deny`) with exactly five fields: `zeit` (ISO time), `entscheidung` (`geblockt`, `gewarnt`, with `auditAllowed` also `erlaubt`), `regel` (fixed list, e.g. `gesperrter-branch`, `geheimnis`, `force-push`, `unklarer-befehl`), `repo` (folder name of the repo, the full path only with `auditFullPath`) and `befehl` (kind only: `git push`, `git commit`, `Write`, `anderes Programm`, …).
+- **What is never logged:** the command itself, commit messages, file names or contents, the reason text, secret values (not even masked), remote URLs. Fields come from an allow list and are length-capped.
+- **Where:** `auditDir`, else `$XDG_DATA_HOME/waechter/audit.jsonl`, else `~/.local/share/waechter/audit.jsonl` (Windows: `%USERPROFILE%\.local\share\waechter`). Folder `0700`, file `0600`. After `auditMaxBytes` (default 1 MB) the file is rotated; three generations (`.1`–`.3`) are kept.
+- **Robust:** the log is written after the hook has answered; a failure never changes or blocks the decision, it is reported once on stderr. Parallel hooks append whole lines. Without a readable config nothing is logged.
+- **Switch off:** `"auditLog": false`.
+
+```
+node waechter.mjs report [--tage 7] [--repo NAME] [--format text|json|md]
+node waechter.mjs report --leeren
+```
+
+The report shows sums per decision, rule and repo, a small text chart per day, the last 10 cases and rules that warn especially often (at least 5 warnings and a quarter of all warnings: candidates for an exception). Broken lines are skipped and counted. `--tage 0` covers everything. `--leeren` moves the log (all generations) to `audit.jsonl….sicherung-<time>` instead of deleting it. Installed via npm, `waechter report` works the same.
+
 ## Install
 
 Requires Node 18+. Clone this repo, then add to `~/.claude/settings.json`:
@@ -100,7 +117,7 @@ The default config path is `%USERPROFILE%\.config\waechter\config.json`; set `XD
 npm test
 ```
 
-Modules: `shell.mjs` (tokenizer), `gitargs.mjs` (git options, push, refspecs), `waechter.mjs` (checks and hook). Tests: `test/shell.test.mjs`, `test/gitargs.test.mjs`, `test/check.test.mjs` (temporary repos, made-up data), `test/waechter.test.mjs`. A CI matrix (ubuntu/macos/windows x Node 18/20/22) is in `.github/workflows/test.yml`.
+Modules: `shell.mjs` (tokenizer), `gitargs.mjs` (git options, push, refspecs), `waechter.mjs` (checks and hook), `audit.mjs` (log), `report.mjs` (`waechter report`). Tests: `test/shell.test.mjs`, `test/gitargs.test.mjs`, `test/check.test.mjs` (temporary repos, made-up data), `test/waechter.test.mjs`, `test/audit.test.mjs` (log and report, always in a temp folder). A CI matrix (ubuntu/macos/windows x Node 18/20/22) is in `.github/workflows/test.yml`.
 
 ## License
 

@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Audit log (`audit.mjs`, default on, `auditLog: false` switches it off): one JSON line per warning/block with time, decision, rule, repo folder name and kind of command only; rotation after `auditMaxBytes`, three generations, user-only file rights. `auditAllowed`, `auditFullPath`, `auditDir` are opt-in.
+- `waechter report [--tage N] [--repo NAME] [--format text|json|md]` and `waechter report --leeren` (moves the log aside).
 - Shell parser (`shell.mjs`) and git argument parser (`gitargs.mjs`) replace the `git push|commit` regex.
 - `blockForcePush` (default `false`): deny `--force`, `-f`, `--force-with-lease`, `--force-if-includes` and `+ref` in public repos.
 - Push: refspecs are split into source and destination, both are checked against `blockedBranches` (`refs/heads/` removed, `+` recognised, `HEAD`/empty push = current branch); wildcard refspecs are denied in public repos; `--tags` commits are author-checked.
