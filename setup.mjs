@@ -22,16 +22,25 @@ export function parseSettings(text, label = 'settings.json') {
   return value
 }
 
-/** The hook command for a script path. Quoted so paths with spaces work. */
-export function hookCommand(scriptPath) {
-  if (/["\n\r]/.test(scriptPath)) throw new Error('the path to waechter.mjs contains a quote or line break; move it to a simpler path')
+/**
+ * The hook command for a script path. Quoted so paths with spaces work. Claude Code runs it
+ * through a shell, so characters the shell would expand inside double quotes are refused.
+ */
+export function hookCommand(scriptPath, platform = process.platform) {
+  const bad = platform === 'win32' ? /["\n\r$`%]/ : /["\n\r$`\\]/
+  if (bad.test(scriptPath)) throw new Error('the path to waechter.mjs contains a character the shell would expand (quote, $, `, %, \\ or a line break); move waechter to a simpler path')
   return `node "${scriptPath}"`
 }
 
-/** True for a hook entry that runs waechter (`.../waechter.mjs`, also via `npx waechter`). */
+// One node call of a file named waechter.mjs (quoted or not), or the bare `waechter` binary.
+const NODE = String.raw`(?:"[^"]*[/\\]node(?:\.exe)?"|(?:\S*[/\\])?node(?:\.exe)?)`
+const SCRIPT = String.raw`(?:"(?:[^"]*[/\\])?waechter\.mjs"|'(?:[^']*[/\\])?waechter\.mjs'|(?:[^\s"'|&;<>()]*[/\\])?waechter\.mjs)`
+const OWN_HOOK = new RegExp(String.raw`^\s*(?:${NODE}\s+${SCRIPT}|(?:npx\s+)?(?:[^\s"'|&;<>()]*[/\\])?waechter)\s*$`)
+
+/** True for a hook entry that is exactly a waechter call (`node ".../waechter.mjs"`, `npx waechter`). */
 export function isWaechterHook(hook) {
   if (!isObject(hook) || typeof hook.command !== 'string') return false
-  return /waechter\.mjs\b|(?:^|[\s/\\"'])waechter["']?\s*$/.test(hook.command)
+  return OWN_HOOK.test(hook.command)
 }
 
 /** All waechter hook entries in PreToolUse: [{ matcher, command }]. */
@@ -81,7 +90,8 @@ export function addHook(input, command, matcher = DEFAULT_MATCHER) {
 
 /**
  * Removes exactly the waechter hook entries. Groups, PreToolUse and hooks that become empty
- * through this are removed too, so init followed by remove gives back the original object.
+ * through this are removed too, so init followed by remove gives back the original object
+ * (exception: an originally empty "hooks": {} or "PreToolUse": [] is not restored).
  */
 export function removeHook(input) {
   const settings = clone(input ?? {})

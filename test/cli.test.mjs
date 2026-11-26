@@ -1,11 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, statSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, statSync, symlinkSync, lstatSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { doctor, formatDoctor, parseArgs, claudeDir, configPath, scriptFromCommand, selfTest } from '../cli.mjs'
+import { doctor, formatDoctor, parseArgs, claudeDir, configPath, scriptFromCommand, selfTest, STARTER_CONFIG } from '../cli.mjs'
 import { hookCommand } from '../setup.mjs'
 
 const SCRIPT = fileURLToPath(new URL('../waechter.mjs', import.meta.url))
@@ -60,7 +60,8 @@ test('without --ziel only the (bent) home folder is used; nothing lands anywhere
   assert.deepEqual(files(home), ['.claude/settings.json', '.config/waechter/config.json'].map(p => join(...p.split('/'))))
   const settings = JSON.parse(readFileSync(join(home, '.claude', 'settings.json'), 'utf8'))
   assert.equal(settings.hooks.PreToolUse[0].hooks[0].command, hookCommand(SCRIPT))
-  assert.equal(readFileSync(join(home, '.config', 'waechter', 'config.json'), 'utf8'), readFileSync(new URL('../config.example.json', import.meta.url), 'utf8'))
+  assert.equal(readFileSync(join(home, '.config', 'waechter', 'config.json'), 'utf8'), STARTER_CONFIG)
+  assert.deepEqual(JSON.parse(STARTER_CONFIG), { publicRepoPatterns: [] }, 'starter config adds nothing beyond the defaults')
 })
 
 test('CLAUDE_CONFIG_DIR and XDG_CONFIG_HOME are respected', () => {
@@ -181,14 +182,16 @@ const status = (checks, name) => checks.find(c => c.name === name)?.status
 test('doctor: everything fine gives exit 0 and ✓ everywhere, also as JSON', () => {
   const { dir, ziel, cfg } = installed()
   const before = files(dir)
-  const r = run(['doctor', '--ziel', ziel, '--config', cfg, '--json'], temp())
+  const r = run(['doctor', '--ziel', ziel, '--json'], temp(), { WAECHTER_CONFIG: cfg })
   assert.equal(r.code, 0, r.out)
   const json = JSON.parse(r.out)
   assert.equal(json.ok, true)
   assert.deepEqual(json.checks.map(c => c.status), json.checks.map(() => 'ok'))
   assert.deepEqual(json.checks.map(c => c.name), ['node', 'git', 'settings', 'config', 'hook', 'script', 'selftest'])
   assert.deepEqual(files(dir), before, 'doctor writes nothing')
-  assert.match(run(['doctor', '--ziel', ziel, '--config', cfg], temp()).out, /^waechter doctor\n✓ Node\.js[\s\S]*All good\.\n$/)
+  assert.match(run(['doctor', '--ziel', ziel], temp(), { WAECHTER_CONFIG: cfg }).out, /^waechter doctor\n✓ Node\.js[\s\S]*All good\.\n$/)
+  const other = run(['doctor', '--ziel', ziel, '--config', cfg, '--json'], temp())
+  assert.equal(JSON.parse(other.out).checks.find(c => c.name === 'config-path').status, 'warn', '--config that the hook does not read is pointed out')
 })
 
 test('doctor finds a missing settings file and a missing hook', () => {
@@ -275,4 +278,44 @@ test('written settings keep the mode of the old file', { skip: process.platform 
   writeFileSync(cfg, '{}')
   assert.equal(run(['init', '--ziel', ziel, '--config', cfg, '--ja'], home).code, 0)
   assert.equal(statSync(join(ziel, 'settings.json')).mode & 0o777, 0o640)
+})
+
+test('init writes through a symlinked settings.json and keeps the link', { skip: process.platform === 'win32' }, () => {
+  const home = temp()
+  mkdirSync(join(home, 'real'))
+  mkdirSync(join(home, 'c'))
+  writeFileSync(join(home, 'real', 'settings.json'), JSON.stringify({ model: 'x' }))
+  symlinkSync(join('..', 'real', 'settings.json'), join(home, 'c', 'settings.json'))
+  const cfg = join(home, 'cfg.json')
+  writeFileSync(cfg, '{}')
+  assert.equal(run(['init', '--ziel', join(home, 'c'), '--config', cfg, '--ja'], home).code, 0)
+  assert.ok(lstatSync(join(home, 'c', 'settings.json')).isSymbolicLink())
+  const s = JSON.parse(readFileSync(join(home, 'real', 'settings.json'), 'utf8'))
+  assert.equal(s.model, 'x')
+  assert.equal(s.hooks.PreToolUse.length, 1)
+})
+
+test('init with an existing entry that does not cover Bash fails clearly', () => {
+  const { dir, ziel, cfg } = installed()
+  writeFileSync(join(ziel, 'settings.json'), JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Write', hooks: [{ type: 'command', command: hookCommand(SCRIPT) }] }] } }))
+  const r = run(['init', '--ziel', ziel, '--config', cfg, '--ja'], dir)
+  assert.equal(r.code, 1)
+  assert.match(r.err, /does not cover Bash/)
+  const m = run(['init', '--ziel', installed().ziel, '--config', cfg, '--matcher', 'Bash|Write', '--ja'], dir)
+  assert.equal(m.code, 0)
+  assert.match(m.err, /--matcher "Bash\|Write" was not applied/)
+})
+
+test('init --entfernen leaves foreign hooks with similar names alone', () => {
+  const home = temp()
+  const ziel = join(home, 'c')
+  mkdirSync(ziel)
+  const foreign = { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [
+    { type: 'command', command: 'node /x/my-waechter.mjs' },
+    { type: 'command', command: 'node a.mjs && node /w/waechter.mjs' },
+  ] }] } }
+  writeFileSync(join(ziel, 'settings.json'), JSON.stringify(foreign))
+  const r = run(['init', '--entfernen', '--ziel', ziel, '--ja'], home)
+  assert.match(r.out, /No waechter entry found/)
+  assert.deepEqual(JSON.parse(readFileSync(join(ziel, 'settings.json'), 'utf8')), foreign)
 })

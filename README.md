@@ -62,13 +62,13 @@ node waechter/waechter.mjs init     # shows the change to ~/.claude/settings.jso
 node waechter/waechter.mjs doctor   # checks everything and runs a self-test
 ```
 
-**`waechter init`** adds the hook to Claude Code's `settings.json` and creates a starter config from `config.example.json` if there is none.
+**`waechter init`** adds the hook to Claude Code's `settings.json` and creates a starter config `{ "publicRepoPatterns": [] }` if there is none (nothing beyond the defaults; all keys are explained in `config.example.json`).
 
 - It first prints exactly what would change (a diff) and writes only after you confirm, or with `--ja`/`--yes`. `--trocken`/`--dry-run` never writes.
 - Before changing the file it keeps a copy next to it (`settings.json.waechter-backup-<time>`).
-- Other hooks, their order and unknown fields stay as they are. An existing waechter entry is recognised (no duplicate). Broken JSON stops it with a clear message instead of overwriting.
+- Other hooks, their order and unknown fields stay as they are. An existing waechter entry is recognised (no duplicate; only an entry that is exactly `node "…/waechter.mjs"` or `waechter` counts). A symlinked `settings.json` stays a symlink. Broken JSON stops it with a clear message instead of overwriting.
 - `waechter init --entfernen` (`--remove`) takes exactly its own entry out again.
-- Settings folder: `--ziel <dir>` (`--target`), else `WAECHTER_CLAUDE_DIR`, else `CLAUDE_CONFIG_DIR`, else `~/.claude`. Config file: `--config <file>`, else the usual config path (see below). `--matcher` sets the hook matcher (default `Bash`; for the write check use `Bash|Write|Edit|MultiEdit|NotebookEdit`).
+- Settings folder: `--ziel <dir>` (`--target`), else `WAECHTER_CLAUDE_DIR`, else `CLAUDE_CONFIG_DIR`, else `~/.claude`. Config file: `--config <file>`, else the usual config path (see below). The path to waechter must not contain `"`, `$`, `` ` `` or (outside Windows) `\`, because Claude Code runs the hook through a shell. `--matcher` sets the hook matcher (default `Bash`; for the write check use `Bash|Write|Edit|MultiEdit|NotebookEdit`).
 
 **`waechter doctor`** checks the Node.js version, git, that `settings.json` is readable and contains the hook for `Bash`, that the script path exists, and every config field (wrong types and invalid regexes are errors, unknown fields are warnings). Then it feeds the hook two made-up inputs in a temporary repo (a harmless `git status` must pass, a commit with a made-up key in a public repo must be denied). Each line is ✓, ⚠ or ✗, failed checks come with one sentence on how to fix them. Exit code 0 (fine) or 1 (problems); `--json` for machine-readable output. doctor writes nothing outside a temporary folder.
 

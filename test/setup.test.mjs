@@ -17,14 +17,19 @@ test('parseSettings: empty text is an empty object, broken JSON throws a clear e
 
 test('hookCommand quotes the path and rejects quotes in it', () => {
   assert.equal(hookCommand('/a b/waechter.mjs'), 'node "/a b/waechter.mjs"')
-  assert.throws(() => hookCommand('/a"b/waechter.mjs'), /quote/)
+  for (const bad of ['/a"b/waechter.mjs', '/home/u/$(touch x)/waechter.mjs', '/a/`id`/waechter.mjs', '/a\\b/waechter.mjs', '/a\nb/waechter.mjs']) {
+    assert.throws(() => hookCommand(bad, 'linux'), /shell would expand/, bad)
+  }
+  assert.equal(hookCommand('C:\\tools\\waechter\\waechter.mjs', 'win32'), 'node "C:\\tools\\waechter\\waechter.mjs"')
+  assert.throws(() => hookCommand('C:\\%TEMP%\\waechter.mjs', 'win32'), /shell would expand/)
 })
 
 test('isWaechterHook recognises the usual forms and nothing else', () => {
   for (const command of [CMD, 'node $HOME/path/to/waechter/waechter.mjs', 'node "C:\\tools\\waechter\\waechter.mjs"', 'npx waechter', '/usr/local/bin/waechter']) {
     assert.ok(isWaechterHook({ type: 'command', command }), command)
   }
-  for (const command of ['node other.mjs', 'echo waechter-ish', 'node /x/waechter-old/run.mjs', 'waechter report']) {
+  for (const command of ['node other.mjs', 'echo waechter-ish', 'node /x/waechter-old/run.mjs', 'waechter report', 'node /x/not-waechter.mjs',
+    'node /x/run-waechter.mjs --wrap', 'echo waechter', 'node a.mjs && node /w/waechter.mjs', 'node /x/waechter.mjs; rm -rf x']) {
     assert.ok(!isWaechterHook({ type: 'command', command }), command)
   }
   assert.ok(!isWaechterHook(null))

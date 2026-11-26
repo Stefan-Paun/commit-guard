@@ -38,13 +38,13 @@ node waechter/waechter.mjs init     # zeigt die Änderung an ~/.claude/settings.
 node waechter/waechter.mjs doctor   # prüft alles und macht einen Selbsttest
 ```
 
-**`waechter init`** trägt den Hook in die `settings.json` von Claude Code ein und legt eine Start-Konfiguration aus `config.example.json` an, falls noch keine da ist.
+**`waechter init`** trägt den Hook in die `settings.json` von Claude Code ein und legt eine Start-Konfiguration `{ "publicRepoPatterns": [] }` an, falls noch keine da ist (nichts über den Standard hinaus; alle Schlüssel erklärt `config.example.json`).
 
 - Zeigt zuerst genau, was sich ändern würde (Diff), und schreibt erst nach Bestätigung oder mit `--ja`/`--yes`. `--trocken`/`--dry-run` schreibt nie.
 - Vor der Änderung liegt eine Kopie daneben (`settings.json.waechter-backup-<Zeit>`).
-- Andere Hooks, ihre Reihenfolge und unbekannte Felder bleiben, wie sie sind. Ein vorhandener Wächter-Eintrag wird erkannt (kein Doppel). Kaputtes JSON führt zum Abbruch mit klarer Meldung statt zum Überschreiben.
+- Andere Hooks, ihre Reihenfolge und unbekannte Felder bleiben, wie sie sind. Ein vorhandener Wächter-Eintrag wird erkannt (kein Doppel; es zählt nur ein Eintrag, der genau `node "…/waechter.mjs"` oder `waechter` lautet). Eine verlinkte `settings.json` bleibt ein Symlink. Kaputtes JSON führt zum Abbruch mit klarer Meldung statt zum Überschreiben.
 - `waechter init --entfernen` (`--remove`) nimmt genau den eigenen Eintrag wieder heraus.
-- Einstellungsordner: `--ziel <ordner>` (`--target`), sonst `WAECHTER_CLAUDE_DIR`, sonst `CLAUDE_CONFIG_DIR`, sonst `~/.claude`. Konfiguration: `--config <datei>`, sonst der übliche Pfad (siehe unten). `--matcher` setzt den Matcher (Standard `Bash`; für die Schreibprüfung `Bash|Write|Edit|MultiEdit|NotebookEdit`).
+- Einstellungsordner: `--ziel <ordner>` (`--target`), sonst `WAECHTER_CLAUDE_DIR`, sonst `CLAUDE_CONFIG_DIR`, sonst `~/.claude`. Konfiguration: `--config <datei>`, sonst der übliche Pfad (siehe unten). Der Pfad zum Wächter darf kein `"`, `$`, `` ` `` und (außer unter Windows) kein `\` enthalten, weil Claude Code den Hook über eine Shell startet. `--matcher` setzt den Matcher (Standard `Bash`; für die Schreibprüfung `Bash|Write|Edit|MultiEdit|NotebookEdit`).
 
 **`waechter doctor`** prüft Node-Version, git, ob die `settings.json` lesbar ist und den Hook für `Bash` enthält, ob der Skriptpfad existiert, und jedes Feld der Konfiguration (falsche Typen und ungültige Regexe sind Fehler, unbekannte Felder Warnungen). Danach füttert er den Hook in einem temporären Repo mit zwei erfundenen Eingaben (ein harmloses `git status` muss durchgehen, ein Commit mit erfundenem Schlüssel in einem öffentlichen Repo muss geblockt werden). Jede Zeile ist ✓, ⚠ oder ✗, zu jedem Fehler gibt es einen Satz, wie man ihn behebt. Exit-Code 0 (alles gut) oder 1 (Probleme); `--json` für maschinenlesbare Ausgabe. doctor schreibt nichts außerhalb eines Temp-Ordners.
 

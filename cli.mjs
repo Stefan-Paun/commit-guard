@@ -81,9 +81,15 @@ export function configPath(opts = {}, env = process.env) {
   return join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'waechter', 'config.json')
 }
 
+// Starter config: nothing beyond the defaults, so no check gets stricter or looser by itself.
+export const STARTER_CONFIG = '{ "publicRepoPatterns": [] }\n'
+
 const stamp = () => new Date().toISOString().replace(/[:.]/g, '-')
 
-function writeAtomic(path, text) {
+// Writes via a temp file + rename. A symlinked file (dotfile managers) keeps its link: the target is written.
+function writeAtomic(link, text) {
+  let path = link
+  try { path = realpathSync(link) } catch {}
   const tmp = `${path}.waechter-tmp-${process.pid}-${randomBytes(4).toString('hex')}`
   let mode
   try { mode = statSync(path).mode & 0o777 } catch {}
@@ -125,19 +131,27 @@ export async function init(opts, io, env = process.env) {
   }
   const after = formatSettings(result.settings)
   const cfgPath = configPath(opts, env)
-  const example = join(HERE, 'config.example.json')
   const createConfig = !opts.entfernen && !existsSync(cfgPath)
 
   out(`Settings: ${settingsPath}${exists ? '' : ' (does not exist yet)'}`)
   if (!result.changes.length) {
     if (opts.entfernen) out('No waechter entry found, nothing to remove.')
-    else out(`waechter is already installed (${result.already.map(h => h.command).join(', ')}), nothing to change.`)
+    else {
+      out(`waechter is already installed (${result.already.map(h => `matcher "${h.matcher}": ${h.command}`).join(', ')}), nothing to change.`)
+      if (!result.already.some(h => matcherCovers(h.matcher, 'Bash'))) {
+        io.stderr.write('waechter init: the existing entry does not cover Bash, so commit/push are not checked. Run "waechter init --entfernen" and then "waechter init".\n')
+        return 1
+      }
+      if (opts.matcher && !result.already.some(h => h.matcher === opts.matcher)) {
+        io.stderr.write(`waechter init: --matcher "${opts.matcher}" was not applied because an entry exists; run "waechter init --entfernen" first to change it.\n`)
+      }
+    }
   } else {
     out('')
     out(compactDiff(lineDiff(before, after)))
     out('')
   }
-  if (createConfig) out(`Config: ${cfgPath} does not exist yet, it will be created from config.example.json.`)
+  if (createConfig) out(`Config: ${cfgPath} does not exist yet, a starter config will be created (${STARTER_CONFIG.trim()}).`)
   if (!result.changes.length && !createConfig) return 0
 
   if (opts.trocken) { out('Dry run: nothing was written.'); return 0 }
@@ -147,6 +161,11 @@ export async function init(opts, io, env = process.env) {
   }
 
   if (result.changes.length) {
+    const now = existsSync(settingsPath) ? readFileSync(settingsPath, 'utf8') : ''
+    if (now !== before) {
+      io.stderr.write(`waechter init: ${settingsPath} was changed meanwhile; nothing was written. Run waechter init again.\n`)
+      return 1
+    }
     mkdirSync(dir, { recursive: true })
     if (exists) {
       const backup = `${settingsPath}.waechter-backup-${stamp()}`
@@ -158,9 +177,8 @@ export async function init(opts, io, env = process.env) {
   }
   if (createConfig) {
     mkdirSync(dirname(cfgPath), { recursive: true })
-    if (existsSync(example)) copyFileSync(example, cfgPath, constants.COPYFILE_EXCL)
-    else writeFileSync(cfgPath, '{}\n', { flag: 'wx' })
-    out(`Config created: ${cfgPath} (set publicRepoPatterns to your public repos)`)
+    writeFileSync(cfgPath, STARTER_CONFIG, { flag: 'wx', mode: 0o600 })
+    out(`Config created: ${cfgPath}. Add your public repos to publicRepoPatterns; all other keys are explained in config.example.json.`)
   }
   if (!opts.entfernen) out('Restart Claude Code (or open /hooks) so the hook is picked up, then run: waechter doctor')
   return 0
@@ -267,6 +285,9 @@ export function doctor(opts = {}, env = process.env, deps = {}) {
       if (errors.length) add('config', 'fail', `${cfgPath}: ${errors.join('; ')}`, 'Fix these fields; compare with config.example.json.')
       else if (warnings.length) add('config', 'warn', `${cfgPath}: ${warnings.join('; ')}`, 'Remove or rename these fields; compare with config.example.json.')
       else add('config', 'ok', `${cfgPath} is valid`)
+      if (opts.config && resolve(opts.config) !== configPath({}, env)) {
+        add('config-path', 'warn', `the hook itself does not read ${cfgPath} but ${configPath({}, env)}`, 'Set WAECHTER_CONFIG for Claude Code, or move the file to that path.')
+      }
     } catch (e) {
       add('config', 'fail', e.message.replace(/ Nothing was changed.*$/, ''), 'Fix the JSON in the config file; compare with config.example.json.')
       config = {}
