@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `waechter init` (`--ziel`, `--config`, `--matcher`, `--trocken`, `--ja`, `--entfernen`): adds the hook to Claude Code's `settings.json` after showing a diff, with a backup, without touching other hooks; creates a starter config. `waechter doctor` (`--json`): checks Node, git, settings, hook, script path and config fields, then self-tests the hook in a temporary repo. New modules `setup.mjs` (pure merge/validation) and `cli.mjs`.
 - Shell parser (`shell.mjs`) and git argument parser (`gitargs.mjs`) replace the `git push|commit` regex.
 - `blockForcePush` (default `false`): deny `--force`, `-f`, `--force-with-lease`, `--force-if-includes` and `+ref` in public repos.
 - Push: refspecs are split into source and destination, both are checked against `blockedBranches` (`refs/heads/` removed, `+` recognised, `HEAD`/empty push = current branch); wildcard refspecs are denied in public repos; `--tags` commits are author-checked.

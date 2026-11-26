@@ -30,7 +30,29 @@ Matcher: `"matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit"`.
 
 ## Installation
 
-Repo klonen und in `~/.claude/settings.json` einen `PreToolUse`-Hook mit Matcher `Bash` eintragen, der `node $HOME/pfad/zu/waechter/waechter.mjs` aufruft (Beispiel siehe `README.md`).
+Braucht Node 18+ und git.
+
+```
+git clone https://github.com/Stefan-Paun/waechter.git
+node waechter/waechter.mjs init     # zeigt die Änderung an ~/.claude/settings.json, fragt nach, legt eine Sicherung an
+node waechter/waechter.mjs doctor   # prüft alles und macht einen Selbsttest
+```
+
+**`waechter init`** trägt den Hook in die `settings.json` von Claude Code ein und legt eine Start-Konfiguration aus `config.example.json` an, falls noch keine da ist.
+
+- Zeigt zuerst genau, was sich ändern würde (Diff), und schreibt erst nach Bestätigung oder mit `--ja`/`--yes`. `--trocken`/`--dry-run` schreibt nie.
+- Vor der Änderung liegt eine Kopie daneben (`settings.json.waechter-backup-<Zeit>`).
+- Andere Hooks, ihre Reihenfolge und unbekannte Felder bleiben, wie sie sind. Ein vorhandener Wächter-Eintrag wird erkannt (kein Doppel). Kaputtes JSON führt zum Abbruch mit klarer Meldung statt zum Überschreiben.
+- `waechter init --entfernen` (`--remove`) nimmt genau den eigenen Eintrag wieder heraus.
+- Einstellungsordner: `--ziel <ordner>` (`--target`), sonst `WAECHTER_CLAUDE_DIR`, sonst `CLAUDE_CONFIG_DIR`, sonst `~/.claude`. Konfiguration: `--config <datei>`, sonst der übliche Pfad (siehe unten). `--matcher` setzt den Matcher (Standard `Bash`; für die Schreibprüfung `Bash|Write|Edit|MultiEdit|NotebookEdit`).
+
+**`waechter doctor`** prüft Node-Version, git, ob die `settings.json` lesbar ist und den Hook für `Bash` enthält, ob der Skriptpfad existiert, und jedes Feld der Konfiguration (falsche Typen und ungültige Regexe sind Fehler, unbekannte Felder Warnungen). Danach füttert er den Hook in einem temporären Repo mit zwei erfundenen Eingaben (ein harmloses `git status` muss durchgehen, ein Commit mit erfundenem Schlüssel in einem öffentlichen Repo muss geblockt werden). Jede Zeile ist ✓, ⚠ oder ✗, zu jedem Fehler gibt es einen Satz, wie man ihn behebt. Exit-Code 0 (alles gut) oder 1 (Probleme); `--json` für maschinenlesbare Ausgabe. doctor schreibt nichts außerhalb eines Temp-Ordners.
+
+Ohne Unterbefehl ist `waechter.mjs` der Hook und liest den Werkzeugaufruf von stdin.
+
+### Von Hand
+
+In `~/.claude/settings.json` einen `PreToolUse`-Hook mit Matcher `Bash` eintragen, der `node $HOME/pfad/zu/waechter/waechter.mjs` aufruft (Beispiel siehe `README.md`).
 
 ### Windows
 
@@ -44,7 +66,7 @@ Große Diffs: Ist der gestagte Diff (oder das Push-Log) größer als `maxDiffMeg
 
 ## Tests
 
-`npm test` (Node 18+, keine Abhängigkeiten). Tests: `test/shell.test.mjs`, `test/gitargs.test.mjs`, `test/check.test.mjs` (temporäre Repos, erfundene Daten), `test/waechter.test.mjs`. Eine CI-Matrix (ubuntu/macos/windows × Node 18/20/22) liegt in `.github/workflows/test.yml`.
+`npm test` (Node 18+, keine Abhängigkeiten). Tests: `test/shell.test.mjs`, `test/gitargs.test.mjs`, `test/check.test.mjs` (temporäre Repos, erfundene Daten), `test/waechter.test.mjs`, `test/setup.test.mjs` (Zusammenführen der Einstellungen ohne Dateisystem), `test/cli.test.mjs` (`init`/`doctor`, Heimatordner auf einen Temp-Ordner umgebogen, nie die echte `~/.claude`). Eine CI-Matrix (ubuntu/macos/windows × Node 18/20/22) liegt in `.github/workflows/test.yml`.
 
 ## Lizenz
 

@@ -54,7 +54,29 @@ Matcher for the hook: `"matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit"`.
 
 ## Install
 
-Requires Node 18+. Clone this repo, then add to `~/.claude/settings.json`:
+Requires Node 18+ and git.
+
+```
+git clone https://github.com/Stefan-Paun/waechter.git
+node waechter/waechter.mjs init     # shows the change to ~/.claude/settings.json, asks, keeps a backup
+node waechter/waechter.mjs doctor   # checks everything and runs a self-test
+```
+
+**`waechter init`** adds the hook to Claude Code's `settings.json` and creates a starter config from `config.example.json` if there is none.
+
+- It first prints exactly what would change (a diff) and writes only after you confirm, or with `--ja`/`--yes`. `--trocken`/`--dry-run` never writes.
+- Before changing the file it keeps a copy next to it (`settings.json.waechter-backup-<time>`).
+- Other hooks, their order and unknown fields stay as they are. An existing waechter entry is recognised (no duplicate). Broken JSON stops it with a clear message instead of overwriting.
+- `waechter init --entfernen` (`--remove`) takes exactly its own entry out again.
+- Settings folder: `--ziel <dir>` (`--target`), else `WAECHTER_CLAUDE_DIR`, else `CLAUDE_CONFIG_DIR`, else `~/.claude`. Config file: `--config <file>`, else the usual config path (see below). `--matcher` sets the hook matcher (default `Bash`; for the write check use `Bash|Write|Edit|MultiEdit|NotebookEdit`).
+
+**`waechter doctor`** checks the Node.js version, git, that `settings.json` is readable and contains the hook for `Bash`, that the script path exists, and every config field (wrong types and invalid regexes are errors, unknown fields are warnings). Then it feeds the hook two made-up inputs in a temporary repo (a harmless `git status` must pass, a commit with a made-up key in a public repo must be denied). Each line is ✓, ⚠ or ✗, failed checks come with one sentence on how to fix them. Exit code 0 (fine) or 1 (problems); `--json` for machine-readable output. doctor writes nothing outside a temporary folder.
+
+Without a subcommand, `waechter.mjs` is the hook and reads the tool call from stdin.
+
+### Manual install
+
+Add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -100,7 +122,7 @@ The default config path is `%USERPROFILE%\.config\waechter\config.json`; set `XD
 npm test
 ```
 
-Modules: `shell.mjs` (tokenizer), `gitargs.mjs` (git options, push, refspecs), `waechter.mjs` (checks and hook). Tests: `test/shell.test.mjs`, `test/gitargs.test.mjs`, `test/check.test.mjs` (temporary repos, made-up data), `test/waechter.test.mjs`. A CI matrix (ubuntu/macos/windows x Node 18/20/22) is in `.github/workflows/test.yml`.
+Modules: `shell.mjs` (tokenizer), `gitargs.mjs` (git options, push, refspecs), `waechter.mjs` (checks and hook), `setup.mjs` (merging the hook into settings, config validation, no file access) and `cli.mjs` (`init`, `doctor`). Tests: `test/shell.test.mjs`, `test/gitargs.test.mjs`, `test/check.test.mjs` (temporary repos, made-up data), `test/waechter.test.mjs`, `test/setup.test.mjs`, `test/cli.test.mjs` (home folder bent to a temporary folder, never the real `~/.claude`). A CI matrix (ubuntu/macos/windows x Node 18/20/22) is in `.github/workflows/test.yml`.
 
 ## License
 
