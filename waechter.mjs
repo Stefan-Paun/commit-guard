@@ -418,7 +418,15 @@ export function check(input, config) {
   return worst
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+// Subcommands for people (`waechter init`, `waechter doctor`); without one, waechter runs as the hook.
+const SUBCOMMANDS = new Set(['init', 'doctor', 'help', '--help', '-h'])
+
+if (process.argv[1] === fileURLToPath(import.meta.url) && SUBCOMMANDS.has(process.argv[2])) {
+  // not top-level await: cli.mjs imports this module again, which must finish evaluating first
+  import('./cli.mjs')
+    .then(m => m.main(process.argv.slice(2)))
+    .then(code => { process.exitCode = code }, e => { process.stderr.write(`waechter: ${e.message}\n`); process.exitCode = 1 })
+} else if (process.argv[1] === fileURLToPath(import.meta.url)) {
   let verdict
   try {
     const input = JSON.parse(readFileSync(0, 'utf8'))
