@@ -123,8 +123,8 @@ export function lineDiff(before, after) {
   let i = 0, j = 0
   while (i < n || j < m) {
     if (i < n && j < m && a[i] === b[j]) { out.push(`  ${a[i]}`); i++; j++ }
-    else if (j < m && (i === n || lcs[i][j + 1] >= lcs[i + 1][j])) { out.push(`+ ${b[j]}`); j++ }
-    else { out.push(`- ${a[i]}`); i++ }
+    else if (i < n && (j === m || lcs[i + 1][j] >= lcs[i][j + 1])) { out.push(`- ${a[i]}`); i++ }
+    else { out.push(`+ ${b[j]}`); j++ }
   }
   return out.join('\n')
 }
@@ -165,4 +165,19 @@ export function validateConfig(config) {
     }
   }
   return { errors, warnings }
+}
+
+/** Keeps only changed lines of a lineDiff plus `context` lines around them; gaps become "  …". */
+export function compactDiff(diff, context = 2) {
+  const lines = diff.split('\n')
+  const keep = new Array(lines.length).fill(false)
+  lines.forEach((l, i) => {
+    if (l.startsWith('+ ') || l.startsWith('- ')) for (let k = Math.max(0, i - context); k <= Math.min(lines.length - 1, i + context); k++) keep[k] = true
+  })
+  const out = []
+  lines.forEach((l, i) => {
+    if (keep[i]) out.push(l)
+    else if (out[out.length - 1] !== '  …') out.push('  …')
+  })
+  return out.join('\n')
 }
